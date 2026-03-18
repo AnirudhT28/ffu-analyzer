@@ -21,7 +21,7 @@ OPENAI_API_KEY=your-key-here
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --reload --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 0
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 4. In a second terminal, start the frontend:
