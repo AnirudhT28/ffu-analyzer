@@ -1,0 +1,8 @@
+node_modules
+.env
+ffu.db
+backend/ffu.db
+backend/__pycache__/
+.DS_Store
+backend/data/
+backend/ffu.db-journal
