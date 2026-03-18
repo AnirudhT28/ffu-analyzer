@@ -19,6 +19,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 db = sqlite3.connect(Path(__file__).with_name("ffu.db"), check_same_thread=False)
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 data_dir = Path("data")
+extract = lambda path: pymupdf4llm.to_markdown(str(path), ignore_images=True, ignore_graphics=True)
 
 
 @asynccontextmanager
@@ -36,8 +37,8 @@ def process():
     logger.info("Processing documents...")
     db.execute("DELETE FROM documents"); db.commit()
     paths = sorted(data_dir.rglob("*.pdf"))
-    with ThreadPoolExecutor() as pool:
-        futures = {pool.submit(pymupdf4llm.to_markdown, str(path)): path for path in paths}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(extract, path): path for path in paths}
         for future in as_completed(futures):
             path = futures[future]
             db.execute("INSERT INTO documents(filename, content) VALUES(?, ?)", (path.name, future.result())); db.commit()
