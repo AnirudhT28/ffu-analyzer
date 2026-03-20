@@ -1,0 +1,22 @@
+[
+    {
+        "question": "Vad är den primära åtgärden vid risk för fall till lägre nivå (mer än 2 meter), och när får personlig fallskyddsutrustning användas?",
+        "ground_truth": "Vid fallrisker ska i första hand fasta skyddsanordningar användas[cite: 40]. Personlig fallskyddsutrustning får bara användas i undantagsfall om fasta skydd inte är möjliga att använda, eller om det tar längre tid att få fasta skydd på plats än att utföra arbetet[cite: 46]."
+    },
+    {
+        "question": "Vilken specifik typ av skruv ska belysningsstolparnas luckor vara försedda med?",
+        "ground_truth": "Stolparna skall vara försedda med luckskruv av typ TORX PIM (klåfingerskruv), och gängorna skall vara insmorda med väderbeständigt fett eller kopparpasta[cite: 943]."
+    },
+    {
+        "question": "Hur mycket extra kabellängd måste läggas i marken för in- och utgående kabel vid ett stolpfundament?",
+        "ground_truth": "Vid stolpfundament ska såväl in- som utgående kabel förläggas med en extra längd av minst 0,5 m i mark[cite: 954]."
+    },
+    {
+        "question": "Vid vilken volym krävs det tillstånd från kommunen för att förvara diesel utomhus på arbetsplatsen?",
+        "ground_truth": "Tillstånd från kommunen krävs om man förvarar över 50 000 liter diesel utomhus[cite: 820]."
+    },
+    {
+        "question": "I vilken enhet ersätts mängden för fällning av samtliga träd inom angivet område (konto BFB.1)?",
+        "ground_truth": "Mängden ersätts i kvadratmeter (m2)[cite: 1022]."
+    }
+]

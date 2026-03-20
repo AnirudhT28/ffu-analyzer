@@ -3,3 +3,5 @@ uvicorn
 openai
 pymupdf4llm
 python-dotenv
+langchain-text-splitters
+numpy
