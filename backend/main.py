@@ -48,6 +48,8 @@ def process():
 
 @app.post("/chat")
 def chat(body: dict):
+    import time
+    start_time = time.time()
     docs = db.execute("SELECT id, filename FROM documents ORDER BY id").fetchall()
     system = {"role": "system", "content": "You are an FFU document analyst for Swedish construction tender documents. Available documents:\n" + "\n".join(f"{doc_id}: {name}" for doc_id, name in docs) + "\nUse read_document when you need the full content of a document."}
     messages = [system, *body.get("history", []), {"role": "user", "content": body.get("message", "")}]
@@ -68,7 +70,7 @@ def chat(body: dict):
             resp = client.chat.completions.create(model="gpt-5.4", messages=messages, tools=tools, tool_choice="auto")
             msg = resp.choices[0].message
             if not msg.tool_calls:
-                return {"response": msg.content or ""}
+                return {"response": msg.content or "", "time_taken_seconds": round(time.time() - start_time, 2)}
             messages.append(msg.model_dump(exclude_none=True))
             for call in msg.tool_calls:
                 args = json.loads(call.function.arguments)
@@ -78,6 +80,6 @@ def chat(body: dict):
                     "tool_call_id": call.id,
                     "content": row[0] if row else "Document not found.",
                 })
-        return {"response": "Stopped after 10 tool iterations."}
+        return {"response": "Stopped after 10 tool iterations.", "time_taken_seconds": round(time.time() - start_time, 2)}
     except Exception as e:
-        return {"response": f"Error: {e}"}
+        return {"response": f"Error: {e}", "time_taken_seconds": round(time.time() - start_time, 2)}
