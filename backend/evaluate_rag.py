@@ -62,11 +62,22 @@ def main():
             cos_sim = np.dot(query_vector, doc["doc_vector"]) / (np.linalg.norm(query_vector) * np.linalg.norm(doc["doc_vector"]))
             similarities.append((cos_sim, doc["filename"], doc["chunk_text"]))
             
-        top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:3]
+        top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:7]
+        
+        if i in [9, 11]:
+            print(f"\n--- DEBUG: RETRIEVED CONTEXT FOR Q{i} ---")
+            for j, chunk in enumerate(top_chunks):
+                print(f"\nChunk {j+1} (Score: {chunk[0]:.4f}, Source: {chunk[1]}):\n{chunk[2][:500]}...")
+            print("-------------------------------------------\n")
+            
         context_text = "\n\n---\n\n".join([f"Source: {chunk[1]}\n{chunk[2]}" for chunk in top_chunks])
         
         # 3. Answer Generation
-        system_prompt = f"""You are a precise assistant analyzing Swedish tender documents (FFUs). Answer the user's question using ONLY the following context chunks. If the answer is not in the context, say you don't know.\n\nContext:\n{context_text}"""
+        system_prompt = f"""You are a Senior Swedish Construction Estimator (Kalkylator). You are analyzing 'Förfrågningsunderlag' (FFU) documents. 
+- If the context contains a table header but the data seems to be in a surrounding chunk, look across all provided chunks to piece the information together.
+- Pay close attention to 'AMA' or 'MER' standards and specific 'Konto/Kod' identifiers (like BFB.1).
+- If the answer is not in the context, say you don't know. 
+Context: {context_text}"""
         
         messages = [
             {"role": "system", "content": system_prompt},

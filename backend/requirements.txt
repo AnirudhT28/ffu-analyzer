@@ -1,7 +1,10 @@
 fastapi
 uvicorn
 openai
-pymupdf4llm
 python-dotenv
+llama-parse
 langchain-text-splitters
 numpy
+pandas
+openpyxl
+tabulate
