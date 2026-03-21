@@ -18,5 +18,33 @@
     {
         "question": "I vilken enhet ersätts mängden för fällning av samtliga träd inom angivet område (konto BFB.1)?",
         "ground_truth": "Mängden ersätts i kvadratmeter (m2)[cite: 1022]."
+    },
+    {
+        "question": "Vilka ritningar har uppdaterats med information om en tillagd högspänningsledning enligt ändrings-PM:et?",
+        "ground_truth": "Enligt ändrings-PM för Ekalund har ritningarna Z-51.1-2014, Z-51.1-2015, Z-51.1-2016, R-51.1-2014, R-51.1-2015 samt R-51.1-2016 ändrats genom att en högspänningsledning har lagts till."
+    },
+    {
+        "question": "Hur mäts och ersätts fällning av samtliga träd inom ett angivet område (kod BFB.1) enligt avstegen från MER Anläggning 23?",
+        "ground_truth": "För kod BFB.1 ersätts mängden i $m^{2}$. I kontot för BFB.1 ingår även mängd och ersättning för stubbrytning enligt kod BFD.12."
+    },
+    {
+        "question": "I vilket konto ingår ersättningen för skötsel av naturmarksytor under garantitiden (kod DHB.33)?",
+        "ground_truth": "Mängd och ersättning för skötsel av naturmarksytor under garantitiden (kod DHB.33) ingår i kontot för gräsklippning och slåtter av gräsyta (kod DDD.21)."
+    },
+    {
+        "question": "Vilka nyckelroller (Grupp 1) ska namnges av entreprenören i anbudsformuläret, och vad är ett obligatoriskt krav för dessa?",
+        "ground_truth": "Enligt fliken 'Organisation' i anbudsformuläret ska entreprenören namnge en Platschef och en Arbetsledare som nyckelroller i Grupp 1. För båda dessa roller är det ett obligatoriskt krav att CV bifogas enligt punkt AFB.623 i förfrågningsunderlaget."
+    },
+    {
+        "question": "Vilka specifika punkter i de administrativa föreskrifterna hänvisas det till gällande krav på kvalitets- respektive miljöledningssystem?",
+        "ground_truth": "I anbudsformulärets kravlista anges att anbudsgivaren ska ha ett kvalitetsledningssystem i enlighet med punkt AFC.2211 och ett miljöledningssystem i enlighet med punkt AFC.2212."
+    },
+    {
+        "question": "Vilken standard refererar den tekniska beskrivningen i mängdförteckningen till?",
+        "ground_truth": "Den tekniska beskrivningen för Ekalund exploatering ansluter till AMA Anläggning 23."
+    },
+    {
+        "question": "Vilka försiktighetsmått ska entreprenören vidta gällande vatten enligt mängdförteckningens allmänna föreskrifter?",
+        "ground_truth": "Entreprenören ska vidta skyddsåtgärder och försiktighetsmått för att förebygga och hindra att markvatten, grundvatten och ytvatten förorenas eller påverkas så att skada uppstår för människors, djurs eller naturens hälsa och miljö."
     }
 ]

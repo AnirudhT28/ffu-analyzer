@@ -1,8 +1,32 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environments
+venv/
+env/
 .env
+
+# Python Caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Databases & Vector Stores
+*.db
+*.sqlite
+*.sqlite3
 ffu.db
+ffu.db-journal
 backend/ffu.db
-backend/__pycache__/
-.DS_Store
-backend/data/
 backend/ffu.db-journal
+
+# Data & Caches (Keep your PDFs and LlamaParse cache local!)
+data/
+cache/
+backend/data/
+backend/cache/
+
+# IDE files
+.vscode/
+.idea/
+.DS_Store
