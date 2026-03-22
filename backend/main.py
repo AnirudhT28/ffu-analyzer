@@ -2,8 +2,8 @@ import os
 import re
 import time
 import json
+import libsql_experimental as libsql
 import logging
-import sqlite3
 import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
@@ -30,8 +30,10 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 
 PERSIST_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-db = None  # Initialized in lifespan after database reconstruction
-
+db = libsql.connect(
+    os.environ["TURSO_DATABASE_URL"],
+    auth_token=os.environ["TURSO_AUTH_TOKEN"]
+)
 
 def filter_latest_revisions(file_paths: list[str]) -> list[str]:
     grouped_files = {}
