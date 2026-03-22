@@ -101,30 +101,11 @@ def extract(path):
 splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 
-def reconstruct_database():
-    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
-    if not os.path.exists(db_path) or os.path.getsize(db_path) < 1000000:
-        if parts:
-            print(f"DEBUG: Shards found: {parts}")
-            print("DEBUG: Reconstructing...")
-            with open(db_path, "wb") as outfile:
-                for part in parts:
-                    with open(part, "rb") as infile:
-                        outfile.write(infile.read())
-            print(f"DEBUG: Final DB size: {os.path.getsize(db_path) / (1024*1024):.2f} MB")
-        else:
-            print("DEBUG: No shards found. Cannot reconstruct database.")
-
-
 @asynccontextmanager
 async def lifespan(app):
     global db
 
-    # Step 1: Reconstruct the database from shards FIRST
-    reconstruct_database()
-
-    # Step 2: ONLY NOW connect to the fully reconstructed database
+    # Connect to the fully reconstructed database
     db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
     db = sqlite3.connect(db_path, check_same_thread=False)
 
@@ -213,8 +194,6 @@ def process():
         db.commit()
 
     db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
-    part_names = [os.path.basename(p) for p in parts]
 
     exists = os.path.exists(db_path)
     size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0.0
@@ -223,16 +202,13 @@ def process():
         "status": "ok",
         "count": len(paths),
         "db_exists": exists,
-        "db_size_mb": size_mb,
-        "parts_found": part_names
+        "db_size_mb": size_mb
     }
 
 
 @app.get("/debug")
 def debug():
     db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
-    part_names = [os.path.basename(p) for p in parts]
 
     exists = os.path.exists(db_path)
     size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0.0
@@ -241,7 +217,6 @@ def debug():
     return {
         "db_exists": exists,
         "db_size_mb": size_mb,
-        "parts_present": part_names,
         "row_count": row_count
     }
 
