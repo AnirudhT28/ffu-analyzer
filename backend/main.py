@@ -198,7 +198,7 @@ def process():
 
 
 
-@app.post("/api/chat")
+@app.post("/chat")
 def chat(body: dict):
     import time
     import numpy as np
