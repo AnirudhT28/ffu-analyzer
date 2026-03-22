@@ -2,13 +2,13 @@ import os
 import re
 import time
 import json
-import libsql_experimental as libsql
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
+import requests as req
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
@@ -27,11 +27,46 @@ data_dir = Path("data")
 cache_dir = data_dir / "cache"
 cache_dir.mkdir(parents=True, exist_ok=True)
 
-# Connect directly to Turso — no local file, no sharding, no reconstruction
-db = libsql.connect(
-    os.environ["TURSO_DATABASE_URL"],
-    auth_token=os.environ["TURSO_AUTH_TOKEN"]
-)
+# Turso HTTP API — no extra packages needed
+TURSO_URL = os.environ["TURSO_DATABASE_URL"].replace("libsql://", "https://")
+TURSO_TOKEN = os.environ["TURSO_AUTH_TOKEN"]
+
+
+def db_execute(sql, params=None):
+    """Run a single SQL statement and return rows."""
+    args = [{"type": "text", "value": str(p)} for p in (params or [])]
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": args}},
+            {"type": "close"}
+        ]
+    }
+    r = req.post(
+        f"{TURSO_URL}/v2/pipeline",
+        headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
+        json=payload
+    )
+    r.raise_for_status()
+    result = r.json()["results"][0]
+    if result["type"] == "error":
+        raise Exception(result["error"]["message"])
+    rows = result["response"]["result"]["rows"]
+    return [[col["value"] for col in row] for row in rows]
+
+
+def db_executemany(sql, records):
+    """Run the same SQL statement for many rows in one HTTP call."""
+    stmts = [
+        {"type": "execute", "stmt": {"sql": sql, "args": [{"type": "text", "value": str(v)} for v in row]}}
+        for row in records
+    ]
+    stmts.append({"type": "close"})
+    r = req.post(
+        f"{TURSO_URL}/v2/pipeline",
+        headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
+        json={"requests": stmts}
+    )
+    r.raise_for_status()
 
 
 def filter_latest_revisions(file_paths: list[str]) -> list[str]:
@@ -101,11 +136,12 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 @asynccontextmanager
 async def lifespan(app):
-    db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
-    # removed db.commit() here — was blocking the async event loop
+    # Ensure table exists
+    db_execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
 
-    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    print(f"DEBUG: Connected to Turso. Document count: {row_count}")
+    rows = db_execute("SELECT COUNT(*) FROM documents")
+    row_count = rows[0][0] if rows else 0
+    print(f"DEBUG: Connected to Turso via HTTP. Document count: {row_count}")
     print(f"DEBUG: OpenAI API Key exists: {bool(os.environ.get('OPENAI_API_KEY'))}")
     print("DEBUG: Backend is fully armed and ready.")
 
@@ -127,8 +163,7 @@ app.add_middleware(
 def process():
     logger.info("Processing documents...")
     Path("data/cache").mkdir(parents=True, exist_ok=True)
-    db.execute("DELETE FROM documents")
-    db.commit()
+    db_execute("DELETE FROM documents")
 
     raw_paths = [str(p) for p in list(data_dir.rglob("*.pdf")) + list(data_dir.rglob("*.xlsx")) if not p.name.startswith("._")]
     filtered_strings = filter_latest_revisions(raw_paths)
@@ -172,11 +207,11 @@ def process():
                 embedding_json = json.dumps(data.embedding)
                 records.append((filename, chunk_text, embedding_json))
 
-            db.executemany("INSERT INTO documents(filename, chunk_text, embedding) VALUES(?, ?, ?)", records)
+            db_executemany("INSERT INTO documents(filename, chunk_text, embedding) VALUES(?, ?, ?)", records)
             time.sleep(0.5)
-        db.commit()
 
-    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    rows = db_execute("SELECT COUNT(*) FROM documents")
+    row_count = rows[0][0] if rows else 0
     return {
         "status": "ok",
         "count": len(paths),
@@ -186,7 +221,8 @@ def process():
 
 @app.get("/debug")
 def debug():
-    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    rows = db_execute("SELECT COUNT(*) FROM documents")
+    row_count = rows[0][0] if rows else 0
     return {
         "turso_connected": True,
         "row_count": row_count
@@ -210,13 +246,13 @@ def chat(body: dict):
         response = client.embeddings.create(input=user_query, model="text-embedding-3-small")
         query_vector = np.array(response.data[0].embedding)
 
-        # 2. Fetch docs & calculate similarity
-        rows = db.execute("SELECT filename, chunk_text, embedding FROM documents").fetchall()
+        # 2. Fetch all docs and calculate similarity
+        rows = db_execute("SELECT filename, chunk_text, embedding FROM documents")
         print(f"DEBUG: Retrieved {len(rows)} chunks from the database.")
 
         similarities = []
         for row in rows:
-            filename, chunk_text, embedding_json = row
+            filename, chunk_text, embedding_json = row[0], row[1], row[2]
             doc_vector = np.array(json.loads(embedding_json))
             cos_sim = np.dot(query_vector, doc_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(doc_vector))
             similarities.append((cos_sim, filename, chunk_text))
