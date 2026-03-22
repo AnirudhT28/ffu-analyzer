@@ -8,4 +8,4 @@ numpy
 pandas
 openpyxl
 tabulate
-libsql-experimental
+libsql-experimentallibsql-experimental
