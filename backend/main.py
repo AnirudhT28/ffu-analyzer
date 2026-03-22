@@ -90,30 +90,44 @@ def extract(path):
 splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 
-@asynccontextmanager
-async def lifespan(app):
-    import os
-    import glob
-    # Reconstruct database if missing but parts exist
-    if not os.path.exists("ffu.db") or os.path.getsize("ffu.db") < 1000000:
-        parts = sorted(glob.glob("ffu.db.part*"))
+import os
+import glob
+PERSIST_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+def reconstruct_database():
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
+    if not os.path.exists(db_path) or os.path.getsize(db_path) < 1000000:
         if parts:
-            print("Reconstructing SQLite database from 50MB chunks...")
-            with open("ffu.db", "wb") as outfile:
+            print(f"DEBUG: Shards found: {parts}")
+            print("DEBUG: Reconstructing...")
+            with open(db_path, "wb") as outfile:
                 for part in parts:
                     with open(part, "rb") as infile:
                         outfile.write(infile.read())
-            print("Database successfully reconstructed!")
+            print(f"DEBUG: Final DB size: {os.path.getsize(db_path) / (1024*1024):.2f} MB")
+
+@asynccontextmanager
+async def lifespan(app):
+    reconstruct_database()
             
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
     db.commit()
     
-    db_path = "ffu.db"
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    print(f"DEBUG: Absolute DB Path: {db_path}")
     print(f"DEBUG: Checking for database at {db_path}. Exists: {os.path.exists(db_path)}")
+    
     if os.path.exists(db_path):
         print(f"DEBUG: Database size: {os.path.getsize(db_path) / (1024*1024):.2f} MB")
         row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         print(f"DEBUG: Vector Document Count: {row_count}")
+        
+    print(f"DEBUG: Contents of DB directory: {os.listdir(PERSIST_DIRECTORY)}")
+    
+    api_key = os.environ.get("OPENAI_API_KEY")
+    print(f"DEBUG: OpenAI API Key exists in environment: {bool(api_key)}")
+    print("DEBUG: Backend is fully armed and ready.")
         
     yield
 
@@ -184,7 +198,7 @@ def process():
 
 
 
-@app.post("/chat")
+@app.post("/api/chat")
 def chat(body: dict):
     import time
     import numpy as np
@@ -195,6 +209,8 @@ def chat(body: dict):
         user_query = req_messages[-1].get("content", "")
     else:
         user_query = body.get("message", "")
+        
+    print(f"DEBUG: User Query: {user_query}")
     
     try:
         # 1. Embed query
@@ -203,6 +219,7 @@ def chat(body: dict):
         
         # 2. Fetch docs & calculate similarity
         rows = db.execute("SELECT filename, chunk_text, embedding FROM documents").fetchall()
+        print(f"DEBUG: Retrieved {len(rows)} chunks from the database.")
         
         similarities = []
         for row in rows:
@@ -214,10 +231,9 @@ def chat(body: dict):
         # 3. Top 7 chunks
         top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:7]
         
-        print(f"DEBUG: Retrieved {len(docs)} chunks from the database. Filtering down to Top {len(top_chunks)}.")
         for i, (score, filename, chunk) in enumerate(top_chunks):
-            preview = chunk[:100].replace('\n', ' ')
-            print(f"DEBUG: Chunk {i+1} | Score: {score:.4f} | Source: {filename}")
+            preview = chunk[:150].replace('\n', ' ')
+            print(f"DEBUG: Chunk Source: {filename} | Score: {score:.4f}")
             print(f"DEBUG: Preview: {preview}...")
             
         context_text = "\n\n---\n\n".join([f"Source: {filename}\n{chunk}" for _, filename, chunk in top_chunks])

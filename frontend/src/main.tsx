@@ -53,7 +53,7 @@ function App() {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sources?: string[] }[]>([])
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const endpoint = `${API_BASE_URL.replace(/\/$/, '')}/chat`;
+  const endpoint = `${API_BASE_URL.replace(/\/$/, '')}/api/chat`;
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
