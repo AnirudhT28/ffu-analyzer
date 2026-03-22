@@ -107,6 +107,14 @@ async def lifespan(app):
             
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
     db.commit()
+    
+    db_path = "ffu.db"
+    print(f"DEBUG: Checking for database at {db_path}. Exists: {os.path.exists(db_path)}")
+    if os.path.exists(db_path):
+        print(f"DEBUG: Database size: {os.path.getsize(db_path) / (1024*1024):.2f} MB")
+        row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        print(f"DEBUG: Vector Document Count: {row_count}")
+        
     yield
 
 
@@ -205,6 +213,13 @@ def chat(body: dict):
             
         # 3. Top 7 chunks
         top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:7]
+        
+        print(f"DEBUG: Retrieved {len(docs)} chunks from the database. Filtering down to Top {len(top_chunks)}.")
+        for i, (score, filename, chunk) in enumerate(top_chunks):
+            preview = chunk[:100].replace('\n', ' ')
+            print(f"DEBUG: Chunk {i+1} | Score: {score:.4f} | Source: {filename}")
+            print(f"DEBUG: Preview: {preview}...")
+            
         context_text = "\n\n---\n\n".join([f"Source: {filename}\n{chunk}" for _, filename, chunk in top_chunks])
         
         # Extract sources from chunks
