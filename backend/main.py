@@ -4,7 +4,6 @@ import time
 import json
 import libsql_experimental as libsql
 import logging
-import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from dotenv import load_dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from llama_parse import LlamaParse
 
@@ -28,12 +27,12 @@ data_dir = Path("data")
 cache_dir = data_dir / "cache"
 cache_dir.mkdir(parents=True, exist_ok=True)
 
-PERSIST_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
-
+# Connect directly to Turso — no local file, no sharding, no reconstruction
 db = libsql.connect(
     os.environ["TURSO_DATABASE_URL"],
     auth_token=os.environ["TURSO_AUTH_TOKEN"]
 )
+
 
 def filter_latest_revisions(file_paths: list[str]) -> list[str]:
     grouped_files = {}
@@ -74,9 +73,8 @@ def extract(path):
         )
         documents = parser.load_data(str(path))
         text = "\n\n".join([doc.text for doc in documents])
-    elif path.suffix.lower() == ".xlsx" or path.suffix.lower() == ".xls":
+    elif path.suffix.lower() in (".xlsx", ".xls"):
         import pandas as pd
-        import numpy as np
         sheets = pd.read_excel(path, sheet_name=None)
         text = ""
         for sheet_name, df in sheets.items():
@@ -103,27 +101,12 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 @asynccontextmanager
 async def lifespan(app):
-    global db
-
-    # Connect to the fully reconstructed database
-    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-    db = sqlite3.connect(db_path, check_same_thread=False)
-
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
-    db.commit()
+    # removed db.commit() here — was blocking the async event loop
 
-    print(f"DEBUG: Absolute DB Path: {db_path}")
-    print(f"DEBUG: Checking for database at {db_path}. Exists: {os.path.exists(db_path)}")
-
-    if os.path.exists(db_path):
-        print(f"DEBUG: Database size: {os.path.getsize(db_path) / (1024*1024):.2f} MB")
-        row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-        print(f"DEBUG: Vector Document Count: {row_count}")
-
-    print(f"DEBUG: Contents of DB directory: {os.listdir(PERSIST_DIRECTORY)}")
-
-    api_key = os.environ.get("OPENAI_API_KEY")
-    print(f"DEBUG: OpenAI API Key exists in environment: {bool(api_key)}")
+    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    print(f"DEBUG: Connected to Turso. Document count: {row_count}")
+    print(f"DEBUG: OpenAI API Key exists: {bool(os.environ.get('OPENAI_API_KEY'))}")
     print("DEBUG: Backend is fully armed and ready.")
 
     yield
@@ -193,30 +176,19 @@ def process():
             time.sleep(0.5)
         db.commit()
 
-    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-
-    exists = os.path.exists(db_path)
-    size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0.0
-
+    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
     return {
         "status": "ok",
         "count": len(paths),
-        "db_exists": exists,
-        "db_size_mb": size_mb
+        "row_count": row_count
     }
 
 
 @app.get("/debug")
 def debug():
-    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
-
-    exists = os.path.exists(db_path)
-    size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0.0
-    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0] if db and exists else 0
-
+    row_count = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
     return {
-        "db_exists": exists,
-        "db_size_mb": size_mb,
+        "turso_connected": True,
         "row_count": row_count
     }
 
