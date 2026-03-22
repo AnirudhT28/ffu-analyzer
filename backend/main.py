@@ -198,6 +198,23 @@ def process():
 
 
 
+@app.get("/debug")
+def debug():
+    import os
+    import glob
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
+    part_names = [os.path.basename(p) for p in parts]
+    
+    exists = os.path.exists(db_path)
+    size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0.0
+    
+    return {
+        "db_exists": exists,
+        "db_size_mb": size_mb,
+        "parts_present": part_names
+    }
+
 @app.post("/chat")
 def chat(body: dict):
     import time
