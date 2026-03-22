@@ -52,7 +52,8 @@ function App() {
   const [thinking, setThinking] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sources?: string[] }[]>([])
 
-  const endpoint = "https://ffu-analyzer-fcnr.koyeb.app/api/chat";
+  const BASE_URL = (import.meta as any).env.VITE_API_URL || "https://foolish-stork-kth-57b627c3.koyeb.app";
+  const endpoint = `${BASE_URL.replace(/\/$/, '')}/api/chat`;
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
