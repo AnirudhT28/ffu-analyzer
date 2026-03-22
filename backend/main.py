@@ -92,6 +92,19 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 @asynccontextmanager
 async def lifespan(app):
+    import os
+    import glob
+    # Reconstruct database if missing but parts exist
+    if not os.path.exists("ffu.db") or os.path.getsize("ffu.db") < 1000000:
+        parts = sorted(glob.glob("ffu.db.part*"))
+        if parts:
+            print("Reconstructing SQLite database from 50MB chunks...")
+            with open("ffu.db", "wb") as outfile:
+                for part in parts:
+                    with open(part, "rb") as infile:
+                        outfile.write(infile.read())
+            print("Database successfully reconstructed!")
+            
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
     db.commit()
     yield

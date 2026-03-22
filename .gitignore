@@ -13,7 +13,6 @@ __pycache__/
 
 # Databases & Vector Stores
 *.db
-!backend/ffu.db
 *.sqlite
 *.sqlite3
 
