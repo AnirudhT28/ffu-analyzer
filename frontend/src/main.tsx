@@ -52,6 +52,7 @@ function App() {
   const [thinking, setThinking] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sources?: string[] }[]>([])
 
+  console.log("API URL at build time:", (import.meta as any).env.VITE_API_URL)
   const BASE_URL = (import.meta as any).env.VITE_API_URL || "https://foolish-stork-kth-57b627c3.koyeb.app";
   const endpoint = `${BASE_URL.replace(/\/$/, '')}/api/chat`;
 
