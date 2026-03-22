@@ -52,7 +52,8 @@ function App() {
   const [thinking, setThinking] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sources?: string[] }[]>([])
 
-  const API_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+  const endpoint = `${API_BASE_URL.replace(/\/$/, '')}/chat`;
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
@@ -62,7 +63,7 @@ function App() {
     setThinking(true)
     setMessages([...history, { role: 'user', content: input.trim() }])
     try {
-      const data = await fetch(`${API_URL}/chat`, {
+      const data = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input.trim(), history }),
