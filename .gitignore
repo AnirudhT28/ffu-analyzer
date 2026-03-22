@@ -13,12 +13,9 @@ __pycache__/
 
 # Databases & Vector Stores
 *.db
+!backend/ffu.db
 *.sqlite
 *.sqlite3
-ffu.db
-ffu.db-journal
-backend/ffu.db
-backend/ffu.db-journal
 
 # Data & Caches (Keep your PDFs and LlamaParse cache local!)
 data/

@@ -48,20 +48,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ role, content, sources
 };
 
 function App() {
-  const [status, setStatus] = useState('')
   const [input, setInput] = useState('')
   const [thinking, setThinking] = useState(false)
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sources?: string[] }[]>([])
-
-  const processFfu = async () => {
-    setStatus('Snurrar igång agenten...')
-    try {
-      const data = await fetch('/api/process', { method: 'POST' }).then((r) => r.json())
-      setStatus(`${data.status}: ${data.count} dokument bearbetade.`)
-    } catch {
-      setStatus('Ett fel uppstod vid bearbetning.')
-    }
-  }
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
@@ -102,21 +91,9 @@ function App() {
           Bygg med <span className="text-brick-coral relative inline-block">Impact<svg className="absolute -bottom-2 left-0 w-full h-3 text-brick-coral/30" viewBox="0 0 100 20" preserveAspectRatio="none"><path d="M0 10 Q 50 20 100 10" stroke="currentColor" strokeWidth="8" fill="transparent"/></svg></span>
         </h1>
         
-        <h2 className="font-serif text-lg sm:text-xl text-brick-navy/70 mt-6 max-w-2xl leading-relaxed">
-          Samhällsbyggarbranschens AI-agentiska plattform för projektanalys, anbud och inköp. Tryck på knappen nedan för att bearbeta FFU-underlaget.
+        <h2 className="font-serif text-lg sm:text-xl text-brick-navy/70 mt-6 mb-12 max-w-2xl leading-relaxed">
+          Samhällsbyggarbranschens AI-agentiska plattform för projektanalys, anbud och inköp.
         </h2>
-        
-        <div className="flex flex-col sm:flex-row gap-4 mt-10 w-full justify-center px-4">
-          <button onClick={processFfu} className="bg-brick-navy text-white px-8 py-3.5 rounded-full font-semibold transition-all hover:bg-[#202733] shadow-lg hover:shadow-xl hover:-translate-y-0.5 w-full sm:w-auto">
-            Bearbeta FFU
-          </button>
-        </div>
-        
-        {status && (
-          <div className="mt-6 text-sm font-medium text-brick-navy/60 animate-pulse bg-white px-6 py-2 rounded-full border border-gray-200">
-            {status}
-          </div>
-        )}
       </header>
 
       {/* RAG Chat / Tool Interface */}
