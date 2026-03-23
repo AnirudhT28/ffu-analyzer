@@ -281,9 +281,11 @@ def chat(body: dict):
         # 4. System prompt
         system_prompt = f"""You are a Senior Swedish Construction Estimator (Kalkylator). You are analyzing 'Förfrågningsunderlag' (FFU) documents. 
 - If the context contains a table header but the data seems to be in a surrounding chunk, look across all provided chunks to piece the information together.
-- Pay close attention to 'AMA' or 'MER' standards and specific 'Konto/Kod' identifiers (like BFB.1).
-- If the answer is not in the context, answer 'Jag vet inte' and leave the cited_sources array empty.
-- IMPORTANT: You MUST respond in pure JSON. The JSON must have exactly two keys: "answer" containing your response in Swedish, and "cited_sources" containing a list of strings strictly matching the 'Source: ...' names from the Context that you actually used. Do not cite sources that were not strictly relevant.
+- Pay close attention to 'AMA' or 'MER' standards and specific 'Konto/Kod' identifiers.
+- If the answer is not in the context, answer 'Jag vet inte' and don't cite sources.
+- IMPORTANT: Provide your comprehensive answer in Swedish. At the very end of your response, append the exact string '__SOURCES_METADATA__' followed by a raw JSON array of the exact 'Source: ...' names you used. Example:
+__SOURCES_METADATA__["Skiss.pdf", "Avtal.xlsx (Flik: Blad1)"]
+If you used no sources, append __SOURCES_METADATA__[]
 
 Context: {context_text}"""
 
@@ -293,30 +295,23 @@ Context: {context_text}"""
         else:
             messages = [system_msg] + body.get("history", []) + [{"role": "user", "content": user_query}]
 
-        # 5. Send to LLM
-        try:
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                response_format={"type": "json_object"}
-            )
-            raw_content = resp.choices[0].message.content or "{}"
-            parsed = json.loads(raw_content)
-            answer_text = parsed.get("answer", "")
-            used_sources = parsed.get("cited_sources", [])
-        except Exception as parse_err:
-            print(f"DEBUG: JSON Parsing Failed: {parse_err}")
-            answer_text = resp.choices[0].message.content or ""
-            used_sources = []
+        # 5. Send to LLM as Stream
+        from fastapi.responses import StreamingResponse
+        def generate():
+            try:
+                stream = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    stream=True
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+            except Exception as e:
+                yield f"Error: {e}"
 
-        return {
-            "answer": answer_text,
-            "sources": used_sources,
-            "time_taken_seconds": round(time.time() - start_time, 2)
-        }
+        return StreamingResponse(generate(), media_type="text/plain")
+        
     except Exception as e:
-        return {
-            "answer": f"Error: {e}",
-            "sources": [],
-            "time_taken_seconds": round(time.time() - start_time, 2)
-        }
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"answer": f"Error: {e}", "sources": []})

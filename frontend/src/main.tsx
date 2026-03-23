@@ -64,12 +64,43 @@ function App() {
     setThinking(true)
     setMessages([...history, { role: 'user', content: input.trim() }])
     try {
-      const data = await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input.trim(), history }),
-      }).then((r) => r.json())
-      setMessages((m) => [...m, { role: 'assistant', content: data.answer || "Kunde inte ansluta till LLM.", sources: data.sources }])
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantMsg = "";
+      let sourcesList: string[] = [];
+
+      setMessages((m) => [...m, { role: 'assistant', content: "", sources: [] }]);
+      setThinking(false);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        assistantMsg += chunk;
+
+        if (assistantMsg.includes("__SOURCES_METADATA__")) {
+          const parts = assistantMsg.split("__SOURCES_METADATA__");
+          assistantMsg = parts[0];
+          try {
+            sourcesList = JSON.parse(parts[1]);
+          } catch (e) {}
+        }
+
+        setMessages((m) => {
+          const newM = [...m];
+          newM[newM.length - 1] = { role: 'assistant', content: assistantMsg, sources: sourcesList };
+          return newM;
+        });
+      }
     } catch {
       setMessages((m) => [...m, { role: 'assistant', content: "Nätverksfel vid kontakt med servern." }])
     }
