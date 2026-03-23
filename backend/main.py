@@ -2,13 +2,14 @@ import os
 import re
 import time
 import json
+import glob
 import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
-import requests as req
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
@@ -27,46 +28,25 @@ data_dir = Path("data")
 cache_dir = data_dir / "cache"
 cache_dir.mkdir(parents=True, exist_ok=True)
 
-# Turso HTTP API — no extra packages needed
-TURSO_URL = os.environ["TURSO_DATABASE_URL"].replace("libsql://", "https://")
-TURSO_TOKEN = os.environ["TURSO_AUTH_TOKEN"]
+PERSIST_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+# In-memory embedding cache — loaded once at startup
+embedding_cache = []  # list of (filename, chunk_text, np.array)
 
 
-def db_execute(sql, params=None):
-    """Run a single SQL statement and return rows."""
-    args = [{"type": "text", "value": str(p)} for p in (params or [])]
-    payload = {
-        "requests": [
-            {"type": "execute", "stmt": {"sql": sql, "args": args}},
-            {"type": "close"}
-        ]
-    }
-    r = req.post(
-        f"{TURSO_URL}/v2/pipeline",
-        headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
-        json=payload
-    )
-    r.raise_for_status()
-    result = r.json()["results"][0]
-    if result["type"] == "error":
-        raise Exception(result["error"]["message"])
-    rows = result["response"]["result"]["rows"]
-    return [[col["value"] for col in row] for row in rows]
-
-
-def db_executemany(sql, records):
-    """Run the same SQL statement for many rows in one HTTP call."""
-    stmts = [
-        {"type": "execute", "stmt": {"sql": sql, "args": [{"type": "text", "value": str(v)} for v in row]}}
-        for row in records
-    ]
-    stmts.append({"type": "close"})
-    r = req.post(
-        f"{TURSO_URL}/v2/pipeline",
-        headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"},
-        json={"requests": stmts}
-    )
-    r.raise_for_status()
+def reconstruct_database():
+    """Reconstruct ffu.db from .part* shards if needed."""
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
+    if parts and (not os.path.exists(db_path) or os.path.getsize(db_path) < 1000000):
+        print(f"DEBUG: Reconstructing database from {len(parts)} shards...")
+        with open(db_path, "wb") as outfile:
+            for part in parts:
+                with open(part, "rb") as infile:
+                    outfile.write(infile.read())
+        print(f"DEBUG: Reconstruction complete. Size: {os.path.getsize(db_path) / (1024*1024):.1f} MB")
+    else:
+        print(f"DEBUG: Database already exists. Size: {os.path.getsize(db_path) / (1024*1024):.1f} MB")
 
 
 def filter_latest_revisions(file_paths: list[str]) -> list[str]:
@@ -136,12 +116,26 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 @asynccontextmanager
 async def lifespan(app):
-    # Ensure table exists
-    db_execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
+    global embedding_cache
 
-    rows = db_execute("SELECT COUNT(*) FROM documents")
-    row_count = rows[0][0] if rows else 0
-    print(f"DEBUG: Connected to Turso via HTTP. Document count: {row_count}")
+    # Step 1: Reconstruct database from shards
+    reconstruct_database()
+
+    # Step 2: Connect and load all embeddings into memory
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    db = sqlite3.connect(db_path, check_same_thread=False)
+    db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
+    db.commit()
+
+    print("DEBUG: Loading embeddings into memory...")
+    rows = db.execute("SELECT filename, chunk_text, embedding FROM documents").fetchall()
+    embedding_cache = [
+        (row[0], row[1], np.array(json.loads(row[2])))
+        for row in rows
+    ]
+    db.close()
+
+    print(f"DEBUG: Loaded {len(embedding_cache)} embeddings into memory.")
     print(f"DEBUG: OpenAI API Key exists: {bool(os.environ.get('OPENAI_API_KEY'))}")
     print("DEBUG: Backend is fully armed and ready.")
 
@@ -159,11 +153,32 @@ app.add_middleware(
 )
 
 
+@app.get("/debug")
+def debug():
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    parts = sorted(glob.glob(os.path.join(PERSIST_DIRECTORY, "ffu.db.part*")))
+    exists = os.path.exists(db_path)
+    size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2) if exists else 0
+    return {
+        "db_exists": exists,
+        "db_size_mb": size_mb,
+        "parts_found": [os.path.basename(p) for p in parts],
+        "row_count": len(embedding_cache)
+    }
+
+
 @app.post("/process")
 def process():
+    global embedding_cache
     logger.info("Processing documents...")
     Path("data/cache").mkdir(parents=True, exist_ok=True)
-    db_execute("DELETE FROM documents")
+
+    db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
+    db = sqlite3.connect(db_path, check_same_thread=False)
+    db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
+    db.execute("DELETE FROM documents")
+    db.commit()
+    embedding_cache = []
 
     raw_paths = [str(p) for p in list(data_dir.rglob("*.pdf")) + list(data_dir.rglob("*.xlsx")) if not p.name.startswith("._")]
     filtered_strings = filter_latest_revisions(raw_paths)
@@ -180,14 +195,10 @@ def process():
             except Exception as e:
                 print(f"Failed to read {path.name}: {e}")
                 continue
-
             if not doc:
                 continue
-
             print(f"Extracted document from {path.name}")
             doc_chunks = splitter.split_documents([doc])
-            print(f"Created {len(doc_chunks)} chunks for {path.name}")
-
             for chunk in doc_chunks:
                 all_chunks.append((chunk.metadata.get("source", path.name), chunk.page_content))
             logger.info(f"Processed {path.name}")
@@ -200,33 +211,18 @@ def process():
             batch = all_chunks[i:i+batch_size]
             texts = [b[1] for b in batch]
             response = client.embeddings.create(input=texts, model="text-embedding-3-small")
-
             records = []
             for j, data in enumerate(response.data):
                 filename, chunk_text = batch[j]
                 embedding_json = json.dumps(data.embedding)
                 records.append((filename, chunk_text, embedding_json))
-
-            db_executemany("INSERT INTO documents(filename, chunk_text, embedding) VALUES(?, ?, ?)", records)
+                embedding_cache.append((filename, chunk_text, np.array(data.embedding)))
+            db.executemany("INSERT INTO documents(filename, chunk_text, embedding) VALUES(?, ?, ?)", records)
+            db.commit()
             time.sleep(0.5)
 
-    rows = db_execute("SELECT COUNT(*) FROM documents")
-    row_count = rows[0][0] if rows else 0
-    return {
-        "status": "ok",
-        "count": len(paths),
-        "row_count": row_count
-    }
-
-
-@app.get("/debug")
-def debug():
-    rows = db_execute("SELECT COUNT(*) FROM documents")
-    row_count = rows[0][0] if rows else 0
-    return {
-        "turso_connected": True,
-        "row_count": row_count
-    }
+    db.close()
+    return {"status": "ok", "count": len(paths), "row_count": len(embedding_cache)}
 
 
 @app.post("/chat")
@@ -242,51 +238,45 @@ def chat(body: dict):
     print(f"DEBUG: User Query: {user_query}")
 
     try:
-        # 1. Embed query
+        # 1. Embed the query
         response = client.embeddings.create(input=user_query, model="text-embedding-3-small")
         query_vector = np.array(response.data[0].embedding)
 
-        # 2. Fetch all docs and calculate similarity
-        rows = db_execute("SELECT filename, chunk_text, embedding FROM documents")
-        print(f"DEBUG: Retrieved {len(rows)} chunks from the database.")
-
+        # 2. Search in-memory cache — instant, no DB calls
+        print(f"DEBUG: Searching {len(embedding_cache)} cached embeddings...")
         similarities = []
-        for row in rows:
-            filename, chunk_text, embedding_json = row[0], row[1], row[2]
-            doc_vector = np.array(json.loads(embedding_json))
+        for filename, chunk_text, doc_vector in embedding_cache:
             cos_sim = np.dot(query_vector, doc_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(doc_vector))
             similarities.append((cos_sim, filename, chunk_text))
 
         # 3. Top 7 chunks
         top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:7]
 
-        for i, (score, filename, chunk) in enumerate(top_chunks):
+        for score, filename, chunk in top_chunks:
             preview = chunk[:150].replace('\n', ' ')
             print(f"DEBUG: Chunk Source: {filename} | Score: {score:.4f}")
             print(f"DEBUG: Preview: {preview}...")
 
         context_text = "\n\n---\n\n".join([f"Source: {filename}\n{chunk}" for _, filename, chunk in top_chunks])
 
-        # Extract sources from chunks
+        # Extract sources
         sources_set = set()
         for _, filename, chunk in top_chunks:
             if filename.lower().endswith((".xlsx", ".xls")):
                 match = re.search(r"### Flik:\s*(.*?)\n", chunk)
                 if match:
-                    sheet_name = match.group(1).strip()
-                    sources_set.add(f"{filename} (Flik: {sheet_name})")
+                    sources_set.add(f"{filename} (Flik: {match.group(1).strip()})")
                 else:
                     sources_set.add(filename)
             else:
                 page_match = re.search(r"(?i)(?:page|sida)\s+(\d+)", chunk)
                 if page_match:
-                    page_num = page_match.group(1)
-                    sources_set.add(f"{filename} (Sida: {page_num})")
+                    sources_set.add(f"{filename} (Sida: {page_match.group(1)})")
                 else:
                     sources_set.add(filename)
         unique_sources = list(sources_set)
 
-        # 4. Construct strict system prompt
+        # 4. System prompt
         system_prompt = f"""You are a Senior Swedish Construction Estimator (Kalkylator). You are analyzing 'Förfrågningsunderlag' (FFU) documents. 
 - If the context contains a table header but the data seems to be in a surrounding chunk, look across all provided chunks to piece the information together.
 - Pay close attention to 'AMA' or 'MER' standards and specific 'Konto/Kod' identifiers (like BFB.1).
