@@ -31,7 +31,8 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 PERSIST_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 # In-memory embedding cache — loaded once at startup
-embedding_cache = []  # list of (filename, chunk_text, np.array)
+embedding_cache = []       # list of (filename, chunk_text)
+embedding_matrix = None    # np.array of shape (N, 1536) for fast vectorized search
 
 
 def reconstruct_database():
@@ -114,14 +115,24 @@ def extract(path):
 splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
 
 
+def build_embedding_matrix(rows):
+    """Build normalized embedding matrix for fast cosine similarity via matrix multiply."""
+    global embedding_cache, embedding_matrix
+    embedding_cache = [(row[0], row[1]) for row in rows]
+    vecs = np.array([json.loads(row[2]) for row in rows], dtype=np.float32)
+    # Pre-normalize rows so cosine sim = dot product
+    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    embedding_matrix = vecs / norms
+    print(f"DEBUG: Built embedding matrix of shape {embedding_matrix.shape}")
+
+
 @asynccontextmanager
 async def lifespan(app):
-    global embedding_cache
-
     # Step 1: Reconstruct database from shards
     reconstruct_database()
 
-    # Step 2: Connect and load all embeddings into memory
+    # Step 2: Load all embeddings into memory and build matrix
     db_path = os.path.join(PERSIST_DIRECTORY, "ffu.db")
     db = sqlite3.connect(db_path, check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
@@ -129,11 +140,9 @@ async def lifespan(app):
 
     print("DEBUG: Loading embeddings into memory...")
     rows = db.execute("SELECT filename, chunk_text, embedding FROM documents").fetchall()
-    embedding_cache = [
-        (row[0], row[1], np.array(json.loads(row[2])))
-        for row in rows
-    ]
     db.close()
+
+    build_embedding_matrix(rows)
 
     print(f"DEBUG: Loaded {len(embedding_cache)} embeddings into memory.")
     print(f"DEBUG: OpenAI API Key exists: {bool(os.environ.get('OPENAI_API_KEY'))}")
@@ -169,7 +178,6 @@ def debug():
 
 @app.post("/process")
 def process():
-    global embedding_cache
     logger.info("Processing documents...")
     Path("data/cache").mkdir(parents=True, exist_ok=True)
 
@@ -178,7 +186,6 @@ def process():
     db.execute("CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, filename TEXT, chunk_text TEXT, embedding TEXT)")
     db.execute("DELETE FROM documents")
     db.commit()
-    embedding_cache = []
 
     raw_paths = [str(p) for p in list(data_dir.rglob("*.pdf")) + list(data_dir.rglob("*.xlsx")) if not p.name.startswith("._")]
     filtered_strings = filter_latest_revisions(raw_paths)
@@ -203,6 +210,7 @@ def process():
                 all_chunks.append((chunk.metadata.get("source", path.name), chunk.page_content))
             logger.info(f"Processed {path.name}")
 
+    all_rows = []
     if all_chunks:
         all_chunks = [(fn, text) for fn, text in all_chunks if text.strip()]
         print(f"Batch embedding {len(all_chunks)} chunks...")
@@ -216,12 +224,13 @@ def process():
                 filename, chunk_text = batch[j]
                 embedding_json = json.dumps(data.embedding)
                 records.append((filename, chunk_text, embedding_json))
-                embedding_cache.append((filename, chunk_text, np.array(data.embedding)))
+                all_rows.append((filename, chunk_text, embedding_json))
             db.executemany("INSERT INTO documents(filename, chunk_text, embedding) VALUES(?, ?, ?)", records)
             db.commit()
             time.sleep(0.5)
 
     db.close()
+    build_embedding_matrix(all_rows)
     return {"status": "ok", "count": len(paths), "row_count": len(embedding_cache)}
 
 
@@ -240,47 +249,42 @@ def chat(body: dict):
     try:
         # 1. Embed the query
         response = client.embeddings.create(input=user_query, model="text-embedding-3-small")
-        query_vector = np.array(response.data[0].embedding)
+        query_vector = np.array(response.data[0].embedding, dtype=np.float32)
+        query_vector /= np.linalg.norm(query_vector)
 
-        # 2. Search in-memory cache — instant, no DB calls
-        print(f"DEBUG: Searching {len(embedding_cache)} cached embeddings...")
-        similarities = []
-        for filename, chunk_text, doc_vector in embedding_cache:
-            cos_sim = np.dot(query_vector, doc_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(doc_vector))
-            similarities.append((cos_sim, filename, chunk_text))
-
-        # 3. Top 7 chunks
-        top_chunks = sorted(similarities, key=lambda x: x[0], reverse=True)[:7]
+        # 2. Vectorized cosine similarity — one matrix multiply, no loop
+        cos_sims = embedding_matrix @ query_vector  # shape (N,)
+        top_indices = np.argsort(cos_sims)[-7:][::-1]
+        top_chunks = [(cos_sims[i], embedding_cache[i][0], embedding_cache[i][1]) for i in top_indices]
 
         for score, filename, chunk in top_chunks:
             preview = chunk[:150].replace('\n', ' ')
             print(f"DEBUG: Chunk Source: {filename} | Score: {score:.4f}")
             print(f"DEBUG: Preview: {preview}...")
 
-        context_text = "\n\n---\n\n".join([f"Source: {filename}\n{chunk}" for _, filename, chunk in top_chunks])
-
-        # Extract sources
-        sources_set = set()
+        # 3. Build context and extract sources
+        context_blocks = []
         for _, filename, chunk in top_chunks:
+            source_name = filename
             if filename.lower().endswith((".xlsx", ".xls")):
                 match = re.search(r"### Flik:\s*(.*?)\n", chunk)
                 if match:
-                    sources_set.add(f"{filename} (Flik: {match.group(1).strip()})")
-                else:
-                    sources_set.add(filename)
+                    source_name = f"{filename} (Flik: {match.group(1).strip()})"
             else:
                 page_match = re.search(r"(?i)(?:page|sida)\s+(\d+)", chunk)
                 if page_match:
-                    sources_set.add(f"{filename} (Sida: {page_match.group(1)})")
-                else:
-                    sources_set.add(filename)
-        unique_sources = list(sources_set)
+                    source_name = f"{filename} (Sida: {page_match.group(1)})"
+            context_blocks.append(f"Source: {source_name}\n{chunk}")
+
+        context_text = "\n\n---\n\n".join(context_blocks)
 
         # 4. System prompt
         system_prompt = f"""You are a Senior Swedish Construction Estimator (Kalkylator). You are analyzing 'Förfrågningsunderlag' (FFU) documents. 
 - If the context contains a table header but the data seems to be in a surrounding chunk, look across all provided chunks to piece the information together.
 - Pay close attention to 'AMA' or 'MER' standards and specific 'Konto/Kod' identifiers (like BFB.1).
-- If the answer is not in the context, say you don't know. 
+- If the answer is not in the context, answer 'Jag vet inte' and leave the cited_sources array empty.
+- IMPORTANT: You MUST respond in pure JSON. The JSON must have exactly two keys: "answer" containing your response in Swedish, and "cited_sources" containing a list of strings strictly matching the 'Source: ...' names from the Context that you actually used. Do not cite sources that were not strictly relevant.
+
 Context: {context_text}"""
 
         system_msg = {"role": "system", "content": system_prompt}
@@ -290,10 +294,24 @@ Context: {context_text}"""
             messages = [system_msg] + body.get("history", []) + [{"role": "user", "content": user_query}]
 
         # 5. Send to LLM
-        resp = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            raw_content = resp.choices[0].message.content or "{}"
+            parsed = json.loads(raw_content)
+            answer_text = parsed.get("answer", "")
+            used_sources = parsed.get("cited_sources", [])
+        except Exception as parse_err:
+            print(f"DEBUG: JSON Parsing Failed: {parse_err}")
+            answer_text = resp.choices[0].message.content or ""
+            used_sources = []
+
         return {
-            "answer": resp.choices[0].message.content or "",
-            "sources": unique_sources,
+            "answer": answer_text,
+            "sources": used_sources,
             "time_taken_seconds": round(time.time() - start_time, 2)
         }
     except Exception as e:
