@@ -91,8 +91,11 @@ function App() {
           const parts = assistantMsg.split("__SOURCES_METADATA__");
           assistantMsg = parts[0];
           try {
-            sourcesList = JSON.parse(parts[1]);
-          } catch (e) {}
+            const rawJson = parts[1].replace(/```json/gi, '').replace(/```/g, '').trim();
+            sourcesList = JSON.parse(rawJson);
+          } catch (e) {
+            console.error("Failed to parse sources JSON:", parts[1]);
+          }
         }
 
         setMessages((m) => {
